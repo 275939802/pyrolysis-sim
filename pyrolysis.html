@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>生物质热解炭化工艺全流程虚拟仿真 (V8.0 Science Edition)</title>
+    <style>
+        /* --- 工业深色UI风格 (V8 精致版) --- */
+        :root {
+            --bg: #0a0b0d; --panel: #111316; --border: #202328;
+            --accent: #00f0ff; --accent-dim: rgba(0, 240, 255, 0.2);
+            /* 调整了产物颜色，使其更具工业感 */
+            --oil: #ff3366; /* 更鲜艳的玫红 */
+            --gas: #ffd700; /* 金黄色 */
+            --char: #2a2a2a; --char-hot: #ff4500; /* 橙红高温色 */
+            --text: #e1e1e1; --text-dim: #8a8f99;
+            --success: #00c853; --warning: #ffd600; --danger: #ff1744;
+        }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', 'Roboto', sans-serif; overflow: hidden; touch-action: none; -webkit-font-smoothing: antialiased; }
+
+        /* 布局框架 */
+        .app-container { display: flex; height: 100vh; }
+        /* 视口背景：更深邃、更聚焦 */
+        .viewport { flex: 3; position: relative; background: radial-gradient(circle at 50% 50%, #1a1c20 0%, #0a0b0d 80%); overflow: hidden; }
+        .controls { flex: 1; min-width: 340px; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: -10px 0 40px rgba(0,0,0,0.6); z-index: 20; overflow-y: auto; }
+
+        /* HUD 仪表板头部 */
+        .hud-header { position: absolute; top: 0; left: 0; right: 0; padding: 25px; display: flex; justify-content: space-between; pointer-events: none; user-select: none; background: linear-gradient(to bottom, rgba(10,11,13,0.9), transparent); }
+        .title h1 { margin: 0; font-size: 26px; color: var(--accent); letter-spacing: 4px; font-weight: 300; text-transform: uppercase; text-shadow: 0 0 10px var(--accent-dim); }
+        .title small { color: var(--text-dim); font-size: 12px; letter-spacing: 1px; display: block; margin-top: 5px; }
+        .status-badge { background: rgba(0, 200, 83, 0.1); color: var(--success); padding: 8px 16px; border-radius: 4px; font-weight: 600; font-family: monospace; border: 1px solid var(--success); display: flex; align-items: center; backdrop-filter: blur(5px); }
+        .status-badge.running { background: rgba(0, 240, 255, 0.1); color: var(--accent); border-color: var(--accent); box-shadow: 0 0 20px var(--accent-dim); }
+
+        /* --- SVG 3D 设备样式 (V8 美学优化) --- */
+        svg { width: 100%; height: 100%; }
+        
+        /* 交互高亮优化：更克制、更聚焦 */
+        .device-group { cursor: pointer; }
+        .device-group:hover .shell { stroke: var(--accent); filter: drop-shadow(0 0 8px var(--accent-dim)); }
+        
+        /* 设备外壳：深色金属质感 */
+        .shell { fill: url(#metalGrad); stroke: #4a4f55; stroke-width: 1.2; transition: all 0.4s ease; }
+        
+        /* 内部结构 */
+        .inner-mech, .inner-material { opacity: 0; transition: opacity 0.4s ease; pointer-events: none; }
+        .inner-mech path, .inner-mech line, .inner-mech rect { stroke: var(--accent); stroke-width: 1.2; fill: none; filter: drop-shadow(0 0 4px var(--accent-dim)); }
+
+        /* 管道系统 (基底) */
+        .pipe-base { fill: none; stroke: #1f2226; stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(1px 2px 4px rgba(0,0,0,0.5)); }
+        .pipe-connect { stroke-width: 8; }
+
+        /* --- 可视化流体 (V8 精致重构 - 核心美化点) --- */
+        /* 基础流体：默认不可见，线条更细，位于管道中心 */
+        .flow-stream { fill: none; stroke-width: 0; stroke-dasharray: 10, 20; stroke-linecap: round; opacity: 0.9; transition: stroke-width 0.5s ease-out; pointer-events: none; }
+        .flow-stream.flowing { animation: flowAnim linear infinite; }
+        @keyframes flowAnim { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
+
+        /* 各相流体特征 - 放弃粗糙的大光晕，使用紧致的核心发光 */
+        .flow-solid { stroke: #8899a6; filter: drop-shadow(0 0 2px #8899a6); }
+        /* 油和气的发光效果移至 SVG filter 中定义，以获得更好的控制 */
+        .flow-oil { stroke: var(--oil); filter: url(#glow-oil); }
+        .flow-gas { stroke: var(--gas); filter: url(#glow-gas); stroke-dasharray: 5, 15; }
+        .flow-char-hot { stroke: var(--char-hot); filter: url(#glow-hot); }
+
+        /* 动态部件动画类 */
+        .rotating { transform-box: fill-box; transform-origin: center; }
+
+        /* 标签 */
+        .label-tag { font-size: 11px; fill: var(--accent); font-family: 'Segoe UI', monospace; font-weight: 600; pointer-events: none; text-anchor: middle; letter-spacing: 0.5px; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+
+        /* --- 右侧控制台 --- */
+        .panel-section { padding: 20px; border-bottom: 1px solid var(--border); }
+        .section-title { color: var(--text); font-size: 14px; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; letter-spacing: 1px; text-transform: uppercase; }
+        .section-title i { margin-right: 10px; color: var(--accent); }
+        
+        /* 参数滑块控件组 */
+        .control-group { margin-bottom: 20px; }
+        .control-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; color: var(--text-dim); }
+        .control-val { font-family: monospace; color: var(--accent); font-weight: 700; }
+        .control-desc { font-size: 11px; color: #666; margin-top: 5px; display: flex; justify-content: space-between; }
+
+        /* 自定义滑块 - 更精致 */
+        input[type=range] { -webkit-appearance: none; width: 100%; height: 3px; background: #2a2e33; border-radius: 2px; outline: none; transition: background 0.3s; }
+        input[type=range]:hover { background: #3a3e44; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--bg); border: 2px solid var(--accent); border-radius: 50%; cursor: pointer; box-shadow: 0 0 8px var(--accent-dim); transition: all 0.2s; }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); background: var(--accent); }
+
+        /* 主控按钮 */
+        .btn-main { width: 100%; padding: 14px; border: 1px solid var(--accent); background: rgba(0, 240, 255, 0.05); color: var(--accent); font-size: 15px; font-weight: 700; border-radius: 4px; cursor: pointer; transition: all 0.3s; text-transform: uppercase; letter-spacing: 1px; backdrop-filter: blur(5px); }
+        .btn-main:hover { background: var(--accent); color: var(--bg); box-shadow: 0 0 25px var(--accent-dim); }
+        .btn-main.stop { border-color: var(--danger); background: rgba(255, 23, 68, 0.1); color: var(--danger); }
+        .btn-main.stop:hover { background: var(--danger); color: white; box-shadow: 0 0 25px rgba(255, 23, 68, 0.3); }
+
+        /* 仪表盘式产物显示 */
+        .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 15px; }
+        .dash-card { background: #16181d; padding: 15px 10px; border-radius: 6px; text-align: center; border: 1px solid var(--border); position: relative; overflow: hidden; box-shadow: inset 0 0 20px rgba(0,0,0,0.2); }
+        /* 使用更亮的底部光条 */
+        .dash-card::after { content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; box-shadow: 0 -2px 10px currentColor; }
+        .dash-card.char { color: #aaa; } .dash-card.char::after { background: #aaa; }
+        .dash-card.oil { color: var(--oil); } .dash-card.oil::after { background: var(--oil); }
+        .dash-card.gas { color: var(--gas); } .dash-card.gas::after { background: var(--gas); }
+
+        .dash-val { font-size: 22px; font-family: monospace; font-weight: 700; margin: 5px 0; }
+        .dash-label { font-size: 11px; opacity: 0.7; text-transform: uppercase; }
+        .rate-indicator { font-size: 10px; color: var(--accent); margin-top: 5px; opacity: 0; transition: opacity 0.5s; }
+        .rate-indicator.active { opacity: 1; }
+
+        /* 响应式 */
+        @media (max-width: 1024px) {
+            .app-container { flex-direction: column; height: auto; }
+            .viewport { height: 55vh; }
+            .controls { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <!-- 左侧：3D工艺视口 -->
+    <div class="viewport">
+        <div class="hud-header">
+            <div class="title">
+                <h1>Pyrolysis Digital Twin</h1>
+                <small>V8.0 Science Edition | 生物质热解炭化工艺全流程仿真</small>
+            </div>
+            <div class="status-badge" id="sys-status">SYSTEM STANDBY</div>
+        </div>
+
+        <svg viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid meet" id="main-svg">
+            <defs>
+                <!-- 材质定义 -->
+                <linearGradient id="metalGrad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stop-color="#3e444b" />
+                    <stop offset="50%" stop-color="#2e3238" />
+                    <stop offset="100%" stop-color="#1c1e22" />
+                </linearGradient>
+                <radialGradient id="fireGrad" cx="50%" cy="70%" r="60%">
+                    <stop offset="0%" stop-color="#fff59d" stop-opacity="1" />
+                    <stop offset="40%" stop-color="#ff9800" stop-opacity="0.8" />
+                    <stop offset="100%" stop-color="#ff3d00" stop-opacity="0" />
+                </radialGradient>
+                <linearGradient id="oilLiquidGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#ff5c8d" />
+                    <stop offset="100%" stop-color="#c2185b" />
+                </linearGradient>
+                <!-- 滤镜：热浪扭曲效果 -->
+                <filter id="heatWave">
+                    <feTurbulence type="fractalNoise" baseFrequency="0.01 0.02" numOctaves="1" result="noise" seed="1">
+                        <animate attributeName="baseFrequency" values="0.01 0.02;0.01 0.04;0.01 0.02" dur="2s" repeatCount="indefinite"/>
+                    </feTurbulence>
+                    <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" />
+                </filter>
+                
+                <!-- 【V8 新增】精致辉光滤镜定义 (替代粗糙的 drop-shadow) -->
+                <!-- 生物油辉光 -->
+                <filter id="glow-oil" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="2" result="blur" in="SourceGraphic"/>
+                    <feColorMatrix in="blur" type="matrix" values="0 0 0 0 1  0 0 0 0 0.2  0 0 0 0 0.4  0 0 0 1 0" result="coloredBlur"/>
+                    <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                </filter>
+                <!-- 热解气辉光 -->
+                <filter id="glow-gas" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="3" result="blur" in="SourceGraphic"/>
+                    <feColorMatrix in="blur" type="matrix" values="0 0 0 0 1  0 0 0 0 0.84 0 0 0 0 0    0 0 0 1 0" result="coloredBlur"/>
+                    <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                </filter>
+                <!-- 高温炭辉光 -->
+                <filter id="glow-hot" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="2.5" result="blur" in="SourceGraphic"/>
+                    <feColorMatrix in="blur" type="matrix" values="0 0 0 0 1  0 0 0 0 0.27 0 0 0 0 0    0 0 0 1 0" result="coloredBlur"/>
+                    <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                </filter>
+            </defs>
+
+            <!-- ================= 工艺流程绘制区域 ================= -->
+
+            <!-- 1. 破碎与预处理 -->
+            <g id="grp-crush" transform="translate(50, 120)" class="device-group">
+                <text x="50" y="-25" class="label-tag">1.破碎/预处理 (Crusher)</text>
+                <path d="M10 20 L90 20 L70 80 L30 80 Z" class="shell" />
+                <rect x="20" y="80" width="60" height="50" class="shell" />
+                <!-- 内部结构 (透视可见) -->
+                <g class="inner-mech">
+                    <circle cx="50" cy="105" r="20" stroke-dasharray="4,4" class="rotating" id="anim-crush-1"/>
+                    <path d="M30 105 L70 105 M50 85 L50 125" stroke-width="3" class="rotating" id="anim-crush-2"/>
+                </g>
+            </g>
+
+            <!-- 管道：固体进料 -->
+            <path d="M50 170 L50 220 L140 220" class="pipe-base" />
+            <path d="M50 170 L50 220 L140 220" class="flow-stream flow-solid" id="flow-feed" />
+
+            <!-- 2. 回转干燥器 -->
+            <g id="grp-dry" transform="translate(140, 200)" class="device-group">
+                <text x="80" y="-35" class="label-tag">2.干燥器 (Dryer)</text>
+                <g transform="rotate(4)">
+                    <rect x="0" y="0" width="160" height="60" rx="8" class="shell" />
+                    <g class="inner-mech">
+                        <line x1="10" y1="15" x2="150" y2="15" stroke-dasharray="8,4" />
+                        <line x1="10" y1="45" x2="150" y2="45" stroke-dasharray="8,4" />
+                        <!-- 物料翻滚动画 -->
+                        <path d="M30 35 Q50 15 70 35 T110 35" stroke="#7f8c8d" stroke-width="3" fill="none">
+                            <animate attributeName="d" values="M30 35 Q50 15 70 35 T110 35; M30 35 Q50 55 70 35 T110 35; M30 35 Q50 15 70 35 T110 35" dur="4s" repeatCount="indefinite"/>
+                        </path>
+                    </g>
+                </g>
+                <!-- 托轮 -->
+                <circle cx="40" cy="65" r="8" fill="#222" stroke="#444" />
+                <circle cx="120" cy="65" r="8" fill="#222" stroke="#444" />
+            </g>
+
+            <!-- 管道与进料螺旋结构 -->
+            <path d="M300 220 L340 220" class="pipe-base" />
+            <path d="M300 220 L340 220" class="flow-stream flow-solid" id="flow-dry" />
+            
+            <g id="grp-feed-screw" transform="translate(340, 200)" class="device-group">
+                <text x="30" y="-15" class="label-tag">进料螺旋</text>
+                <rect x="0" y="10" width="60" height="30" rx="5" class="shell" />
+                <g class="inner-mech">
+                    <line x1="5" y1="25" x2="55" y2="25" />
+                    <path d="M5 25 L55 25" stroke-width="8" stroke-dasharray="4,8" class="rotating" id="anim-feed-screw" />
+                </g>
+            </g>
+
+            <!-- 3. 回转式热解炉 (核心设备) -->
+            <g id="grp-kiln" transform="translate(420, 250)" class="device-group">
+                <text x="150" y="-55" class="label-tag" font-size="14" fill="#fff">3.回转热解炉 (Pyrolysis Reactor)</text>
+                
+                <!-- 燃烧室/加热套 -->
+                <path d="M30 80 L270 80 L250 130 L50 130 Z" fill="#16181d" stroke="#2c3035" />
+                <!-- 火焰与热浪 -->
+                <g id="fire-effect" style="opacity:0; transition: opacity 0.8s;">
+                    <ellipse cx="150" cy="110" rx="80" ry="25" fill="url(#fireGrad)" filter="url(#heatWave)" style="mix-blend-mode: screen;" />
+                </g>
+
+                <!-- 旋转炉体 -->
+                <g transform="rotate(3, 150, 40)">
+                    <path d="M0 0 L300 0 L300 80 L0 80 Z" class="shell" />
+                    <ellipse cx="0" cy="40" rx="12" ry="40" class="shell" fill="#2c3035" />
+                    <ellipse cx="300" cy="40" rx="12" ry="40" class="shell" fill="#4a4f55" />
+                    
+                    <!-- 内部结构 (透视可见) -->
+                    <g class="inner-mech">
+                        <line x1="0" y1="40" x2="300" y2="40" stroke-width="3" />
+                        <!-- 导料螺旋板 -->
+                        <path d="M20 40 Q60 -10 100 40 T180 40 T260 40" fill="none" stroke-width="2" class="rotating" transform-origin="150 40" id="anim-kiln-screw"/>
+                        <!-- 反应区隔板示意 -->
+                        <line x1="100" y1="5" x2="100" y2="75" stroke-dasharray="2,2" opacity="0.5"/>
+                        <line x1="200" y1="5" x2="200" y2="75" stroke-dasharray="2,2" opacity="0.5"/>
+                    </g>
+                    <!-- 内部物料 (透视可见) -->
+                    <g class="inner-material" id="kiln-material">
+                        <rect x="20" y="60" width="80" height="15" fill="#555" /> <!-- 干燥段 -->
+                        <rect x="110" y="60" width="80" height="15" fill="#3d3d3d" /> <!-- 热解段 -->
+                        <rect x="210" y="60" width="70" height="15" fill="#222" /> <!-- 炭化段 -->
+                    </g>
+                </g>
+            </g>
+
+            <!-- 管道：热解气出口 -->
+            <path d="M550 250 L550 120 L750 120" class="pipe-base" />
+            <path d="M550 250 L550 120 L750 120" class="flow-stream flow-gas" id="flow-raw-gas"/>
+            
+            <!-- 气体转子流量计动画 -->
+            <g transform="translate(630, 100)">
+                <rect x="-10" y="-20" width="20" height="40" fill="rgba(255,255,255,0.1)" stroke="#4a4f55" />
+                <polygon points="-5,15 5,15 0,5" fill="var(--gas)" id="gas-rotameter">
+                    <!-- 通过JS控制Y轴位置来模拟流量读数 -->
+                </polygon>
+            </g>
+
+            <!-- 4. 冷凝系统 -->
+            <g id="grp-condense" transform="translate(750, 60)" class="device-group">
+                <text x="40" y="-20" class="label-tag">4.冷凝器</text>
+                <rect x="0" y="0" width="80" height="140" class="shell" />
+                <g class="inner-mech">
+                    <line x1="25" y1="10" x2="25" y2="130" stroke-width="4" stroke="#00e5ff" />
+                    <line x1="55" y1="10" x2="55" y2="130" stroke-width="4" stroke="#00e5ff" />
+                </g>
+            </g>
+
+            <!-- 生物油集油视镜与液位可视化 -->
+            <g transform="translate(760, 200)">
+                <text x="30" y="65" class="label-tag" fill="var(--oil)">生物油收集</text>
+                <!-- 视镜玻璃 -->
+                <rect x="0" y="0" width="60" height="50" fill="rgba(255, 51, 102, 0.1)" stroke="#4a4f55" stroke-width="2" />
+                <!-- 动态液位 -->
+                <rect x="2" y="48" width="56" height="0" fill="url(#oilLiquidGrad)" opacity="0.9" id="oil-level-visual">
+                    <animate attributeName="height" values="10;12;10" dur="2s" repeatCount="indefinite" id="oil-wave-anim"/>
+                    <animate attributeName="y" values="38;36;38" dur="2s" repeatCount="indefinite" id="oil-wave-anim-y"/>
+                </rect>
+                <!-- 液滴滴落动画 -->
+                <circle cx="30" cy="0" r="3" fill="var(--oil)" opacity="0" id="oil-drip">
+                    <animate id="oil-drip-anim" attributeName="cy" from="0" to="40" dur="1s" repeatCount="indefinite" begin="indefinite" />
+                    <animate id="oil-drip-op-anim" attributeName="opacity" values="1;0" dur="1s" repeatCount="indefinite" begin="indefinite" />
+                </circle>
+            </g>
+
+            <!-- 管道：不凝气 -->
+            <path d="M830 100 L920 100 L920 40" class="pipe-base pipe-connect" />
+            <path d="M830 100 L920 100 L920 40" class="flow-stream flow-gas" id="flow-clean-gas" />
+            <text x="920" y="30" class="label-tag" fill="var(--gas)">至火炬/回用</text>
+
+            <!-- 管道：高温炭出料 -->
+            <path d="M720 320 L850 320 L850 420" class="pipe-base" />
+            <path d="M720 320 L850 320 L850 420" class="flow-stream flow-char-hot" id="flow-hot-char" />
+
+            <!-- 5. 水冷螺旋出料机 -->
+            <g id="grp-cool" transform="translate(800, 420)" class="device-group">
+                <text x="75" y="-25" class="label-tag">5.水冷螺旋 (Cooling Screw)</text>
+                <!-- 水套 -->
+                <rect x="-5" y="-5" width="160" height="40" rx="20" fill="rgba(0, 240, 255, 0.15)" stroke="#00e5ff" stroke-width="1"/>
+                <rect x="0" y="0" width="150" height="30" rx="15" class="shell" />
+                <!-- 内部螺旋 (透视可见) -->
+                <g class="inner-mech">
+                    <path d="M10 15 L140 15" stroke-width="6" stroke-dasharray="4,6" class="rotating" id="anim-cool-screw" />
+                </g>
+            </g>
+            
+            <!-- 连接管道：水冷 -> 成品仓 -->
+            <path d="M950 435 L980 435" class="pipe-base pipe-connect" />
+            <path d="M950 435 L980 435" class="flow-stream flow-solid" id="flow-cooled-char" />
+
+            <!-- 6. 成品仓与产物可视化 -->
+            <g id="grp-store" transform="translate(980, 380)" class="device-group">
+                <text x="40" y="-20" class="label-tag">6.生物炭成品仓</text>
+                <path d="M0 0 L80 0 L70 140 L10 140 Z" class="shell" />
+                <!-- 可视化的生物炭堆积 -->
+                <defs>
+                    <clipPath id="siloClip">
+                         <path d="M0 0 L80 0 L70 140 L10 140 Z" />
+                    </clipPath>
+                </defs>
+                <g clip-path="url(#siloClip)">
+                    <!-- 炭堆实体：高度由JS控制 -->
+                    <rect x="0" y="140" width="80" height="0" fill="#222" id="char-pile-visual">
+                        <animate attributeName="fill" values="#222;#2a2a2a;#222" dur="5s" repeatCount="indefinite"/>
+                    </rect>
+                </g>
+                <!-- 检视窗 -->
+                <rect x="30" y="50" width="20" height="60" fill="rgba(255,255,255,0.05)" stroke="#4a4f55"/>
+            </g>
+
+        </svg>
+        
+        <!-- X-Ray 控制覆盖层 -->
+        <div style="position: absolute; bottom: 20px; left: 20px; background: rgba(20,22,25,0.9); padding: 10px 15px; border-radius: 30px; border: 1px solid var(--accent); display: flex; align-items: center; backdrop-filter: blur(5px);">
+            <i style="color:var(--accent); margin-right:10px;">👁️</i>
+            <span style="font-size: 12px; margin-right: 10px; color:var(--accent);">透视模式 (X-RAY)</span>
+            <input type="range" min="0" max="100" value="100" style="width: 100px;" oninput="updateXRay(this.value)">
+        </div>
+    </div>
+
+    <!-- 右侧：工艺控制台 -->
+    <div class="controls">
+        
+        <!-- A. 主控区 -->
+        <div class="panel-section" style="background: linear-gradient(to bottom, rgba(0,240,255,0.05), transparent);">
+            <div class="section-title"><i>⚡</i> 仿真总控 (MAIN CONTROL)</div>
+            <button class="btn-main" id="btn-start" onclick="toggleSim()">启动工艺流程 (START)</button>
+            <!-- 仪表盘显示 -->
+            <div class="dashboard-grid">
+                <div class="dash-card char">
+                    <div class="dash-val" id="db-char">0%</div>
+                    <div class="dash-label">生物炭 (Solid)</div>
+                    <div class="rate-indicator" id="rate-char">Collecting...</div>
+                </div>
+                <div class="dash-card oil">
+                    <div class="dash-val" id="db-oil">0%</div>
+                    <div class="dash-label">生物油 (Liquid)</div>
+                    <div class="rate-indicator" id="rate-oil">Condensing...</div>
+                </div>
+                <div class="dash-card gas">
+                    <div class="dash-val" id="db-gas">0%</div>
+                    <div class="dash-label">热解气 (Gas)</div>
+                    <div class="rate-indicator" id="rate-gas">Vaporizing...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- B. 原料特性 (Feedstock) -->
+        <div class="panel-section">
+            <div class="section-title"><i>📦</i> 原料特性 (Feedstock)</div>
+            
+            <div class="control-group">
+                <div class="control-header">
+                    <span>1. 含水率 (Moisture)</span>
+                    <span id="val-water" class="control-val">15%</span>
+                </div>
+                <input type="range" min="5" max="50" value="15" oninput="updateParam('water', this.value)">
+                <div class="control-desc"><span>干燥</span><span>湿润</span></div>
+            </div>
+            
+            <div class="control-group">
+                <div class="control-header">
+                    <span>2. 物料粒径 (Particle Size)</span>
+                    <span id="val-size" class="control-val">20 mm</span>
+                </div>
+                <input type="range" min="5" max="50" step="5" value="20" oninput="updateParam('size', this.value)">
+                <div class="control-desc"><span>细粉 (传热快)</span><span>大块 (传热慢)</span></div>
+            </div>
+        </div>
+
+        <!-- C. 反应条件 (Reaction) -->
+        <div class="panel-section">
+            <div class="section-title"><i>🔥</i> 反应核心参数 (Reactor)</div>
+            
+            <div class="control-group">
+                <div class="control-header">
+                    <span>3. 热解终温 (Temperature)</span>
+                    <span id="val-temp" class="control-val">550℃</span>
+                </div>
+                <input type="range" min="300" max="850" step="10" value="550" oninput="updateParam('temp', this.value)">
+                <div class="control-desc">
+                    <span style="color:#aaa">低温炭化</span>
+                    <span style="color:var(--oil)">中温产油</span>
+                    <span style="color:var(--gas)">高温裂解</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <div class="control-header">
+                    <span>4. 升温速率 (Heating Rate)</span>
+                    <span id="val-rate" class="control-val">50℃/min</span>
+                </div>
+                <input type="range" min="5" max="300" step="5" value="50" oninput="updateParam('rate', this.value)">
+                <div class="control-desc"><span>慢速(偏稳态)</span><span>快速(偏动力学)</span></div>
+            </div>
+
+            <div class="control-group">
+                <div class="control-header">
+                    <span>5. 固体停留时间 (Residence Time)</span>
+                    <span id="val-time" class="control-val">45 min</span>
+                </div>
+                <input type="range" min="15" max="120" step="5" value="45" oninput="updateParam('time', this.value)">
+                <div class="control-desc">
+                    <span>短时(减少二次反应)</span>
+                    <span>长时(反应彻底/裂解)</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- D. 后处理 (Post-processing) -->
+        <div class="panel-section" style="border-bottom: none;">
+            <div class="section-title"><i>❄️</i> 后处理系统 (Downstream)</div>
+             <div class="control-group">
+                <div class="control-header">
+                    <span>6. 冷却水流量 (Coolant Flow)</span>
+                    <span id="val-cool" class="control-val">100%</span>
+                </div>
+                <input type="range" min="20" max="150" value="100" oninput="updateParam('cool', this.value)">
+                <div class="control-desc" id="cool-desc">
+                    <span style="opacity: 0.7">影响油收率及出料温度</span>
+                    <span>出炭: <b id="out-temp-val" style="color:var(--success)">45℃</b></span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    // 全局状态与参数
+    let isRunning = false;
+    let animFrameId;
+    
+    // 工艺参数 (默认值)
+    let params = {
+        water: 15,  // 含水率 %
+        size: 20,   // 粒径 mm
+        temp: 550,  // 温度 ℃
+        rate: 50,   // 升温速率 ℃/min
+        time: 45,   // 停留时间 min
+        cool: 100   // 冷却流量 %
+    };
+
+    // 仿真结果 (实时计算)
+    let results = {
+        charYield: 0, oilYield: 0, gasYield: 0,
+        outTemp: 25,
+        charRate: 0, oilRate: 0, gasRate: 0 // 相对速率用于动画
+    };
+
+    // 可视化状态变量
+    let charPileLevel = 0; // 炭堆高度 (0-140)
+    let oilTankLevel = 10; // 油箱基础液位
+
+    // ================== 核心交互逻辑 ==================
+
+    // 1. 启动/停止仿真
+    function toggleSim() {
+        isRunning = !isRunning;
+        const btn = document.getElementById('btn-start');
+        const status = document.getElementById('sys-status');
+        const fire = document.getElementById('fire-effect');
+        const indicators = document.querySelectorAll('.rate-indicator');
+        
+        const oilDripAnim = document.getElementById('oil-drip-anim');
+        const oilDripOpAnim = document.getElementById('oil-drip-op-anim');
+
+        if (isRunning) {
+            btn.innerHTML = "⚠️ 紧急停止 (EMERGENCY STOP)";
+            btn.classList.add('stop');
+            status.innerHTML = "SYSTEM RUNNING";
+            status.classList.add('running');
+            
+            fire.style.opacity = 1;
+            indicators.forEach(el => el.classList.add('active'));
+            
+            if(oilDripAnim && oilDripAnim.beginElement) oilDripAnim.beginElement();
+            if(oilDripOpAnim && oilDripOpAnim.beginElement) oilDripOpAnim.beginElement();
+
+            calculateLogic();
+            animFrameId = requestAnimationFrame(simulationLoop);
+
+        } else {
+            btn.innerHTML = "启动工艺流程 (START)";
+            btn.classList.remove('stop');
+            status.innerHTML = "SYSTEM STANDBY";
+            status.classList.remove('running');
+            
+            fire.style.opacity = 0;
+            indicators.forEach(el => el.classList.remove('active'));
+            resetFlows();
+
+            cancelAnimationFrame(animFrameId);
+        }
+    }
+
+    // 2. X-Ray 透视控制
+    function updateXRay(val) {
+        const opacity = val / 100;
+        const inverse = 1 - opacity;
+        document.querySelectorAll('.shell').forEach(el => el.style.opacity = opacity);
+        document.querySelectorAll('.inner-mech, .inner-material').forEach(el => {
+            el.style.opacity = (inverse > 0.1) ? inverse : 0;
+        });
+    }
+
+    // 3. 参数更新统一入口
+    function updateParam(key, val) {
+        params[key] = parseInt(val);
+        const unitMap = { water:'%', size:'mm', temp:'℃', rate:'℃/min', time:'min', cool:'%' };
+        document.getElementById(`val-${key}`).innerText = val + unitMap[key];
+        
+        if(isRunning) calculateLogic();
+        if(key === 'cool' || key === 'temp') updateTempPreview();
+    }
+
+
+    // ================== 【核心升级】科学工艺仿真算法 (V8) ==================
+    // 基于生物质热解动力学与工程经验的半经验模型
+    function calculateLogic() {
+        // --- A. 基础干基物料平衡 (Base Dry Mass Balance) ---
+        // 假设典型木质纤维素原料: 挥发分V=75%, 固定碳FC=20%, 灰分A=5%
+        const baseFC = 20; const baseAsh = 5; const baseVol = 75;
+
+        // 1. 计算干基生物炭产率 (Dry Char Yield)
+        // 影响因素: 温度(主, 负相关), 升温速率(次, 负相关), 粒径(次, 正相关)
+        
+        // 温度因子: 使用指数衰减模拟炭化程度。低温(300C)炭产率高，高温(800C)趋近于固定碳+灰分
+        // T_eff 是有效温度，受粒径影响。大粒径传热慢，有效温度低
+        let sizeEffect = (params.size - 20) * 1.5; // 粒径修正
+        let T_eff = params.temp - sizeEffect; 
+        
+        // 基础炭化模型: Char = (FC+A) + (Volatiles * exp(-k * T))
+        // k 值受升温速率影响。慢速(rate低) k小，炭多；快速(rate高) k大，炭少。
+        let k_rate = 0.003 * (params.rate / 50); // 速率因子
+        let volatileResidual = baseVol * Math.exp(-k_rate * (T_eff - 250)); // 250度起始炭化
+        volatileResidual = Math.max(0, Math.min(baseVol, volatileResidual)); // 限制范围
+
+        let dryChar = baseFC + baseAsh + volatileResidual;
+        // 低温保护: 300度以下反应很慢，炭产率应很高
+        if(params.temp < 350) dryChar = Math.max(dryChar, 45 - (params.temp-300)*0.2);
+
+
+        // 2. 计算干基总挥发分 (Dry Total Volatiles)
+        let dryVolatilesTotal = 100 - dryChar;
+
+        // 3. 挥发分产物分布 (油/气比) (Oil/Gas Partitioning)
+        // 核心机制: 竞争反应与二次裂解
+        // 影响因素: 温度(非线性), 升温速率(正相关产油), 停留时间(高温下负相关产油)
+
+        // 基础油相比例: 呈钟形曲线，峰值在 500-550度
+        let peakTemp = 525;
+        let sigma = 100; // 分布宽度
+        // 高斯函数模拟基础产油分布
+        let baseOilRatio = 0.75 * Math.exp(-Math.pow(params.temp - peakTemp, 2) / (2 * Math.pow(sigma, 2)));
+
+        // 升温速率修正: 快速热解显著提高油收率
+        let rateBonus = (params.rate - 50) * 0.0015;
+        // 停留时间修正: 高温长时导致二次裂解 (Secondary Cracking)
+        let crackingPenalty = 0;
+        if (params.temp > 550) {
+            crackingPenalty = (params.temp - 550) * (params.time / 60) * 0.0008;
+        }
+        
+        let finalOilRatio = baseOilRatio + rateBonus - crackingPenalty;
+        finalOilRatio = Math.max(0.15, Math.min(0.85, finalOilRatio)); // 限制合理的工程范围
+
+        let dryOil = dryVolatilesTotal * finalOilRatio;
+        let dryGas = dryVolatilesTotal * (1 - finalOilRatio);
+
+        // --- B. 湿基计算与水分平衡 (Wet Basis & Water Balance) ---
+        // 输入水分: params.water (相对于总湿重)
+        let waterIn = (params.water / (100 - params.water)) * 100; // 转换为相对于干基的水分量
+        
+        // 冷凝效率: 受冷却水流量影响
+        let condEff = Math.min(1, Math.pow(params.cool / 80, 0.8)); // 非线性效率曲线
+        
+        // 水分分配: 大部分可冷凝进入油相，少部分以水蒸气形式进入气相
+        let waterToOil = waterIn * 0.95 * condEff; 
+        let waterToGas = waterIn - waterToOil;
+        
+        // 有机油冷凝损失: 冷却不足导致部分轻质油组分逃逸进入气相
+        let oilLossToGas = dryOil * (1 - condEff) * 0.5; // 假设50%未冷凝油变为气
+        dryOil = dryOil - oilLossToGas;
+        dryGas = dryGas + oilLossToGas;
+
+        // --- C. 汇总最终结果 ---
+        let totalMassWet = dryChar + dryOil + waterToOil + dryGas + waterToGas;
+
+        results.charYield = (dryChar / totalMassWet) * 100;
+        results.oilYield = ((dryOil + waterToOil) / totalMassWet) * 100; // 生物油含水
+        results.gasYield = ((dryGas + waterToGas) / totalMassWet) * 100;
+
+        // --- D. 过程参数计算 ---
+        // 出炭温度 = 热解温度 - 冷却能力 (简化模型)
+        results.outTemp = params.temp - (params.cool * 3.5);
+        results.outTemp = Math.max(30, results.outTemp);
+
+        // 计算相对速率 (用于动画驱动，归一化到 0-1 范围)
+        results.charRate = Math.min(1, results.charYield / 50);
+        results.oilRate = Math.min(1, results.oilYield / 60);
+        results.gasRate = Math.min(1, results.gasYield / 40);
+
+        updateView();
+    }
+
+
+    // ================== 视图更新与可视化驱动 (V8 美化版) ==================
+    function updateView() {
+        // 1. 更新仪表盘数字
+        document.getElementById('db-char').innerText = results.charYield.toFixed(1) + '%';
+        document.getElementById('db-oil').innerText = results.oilYield.toFixed(1) + '%';
+        document.getElementById('db-gas').innerText = results.gasYield.toFixed(1) + '%';
+        updateTempPreview();
+
+        // 2. 驱动可视化动画
+        
+        // A. 机械转速控制
+        let speedFactor = 45 / params.time;
+        setRotationSpeed('anim-crush-1', 0.6 / speedFactor);
+        setRotationSpeed('anim-crush-2', 0.6 / speedFactor);
+        setRotationSpeed('anim-feed-screw', 2.5 / speedFactor);
+        setRotationSpeed('anim-kiln-screw', 6.0 / speedFactor);
+        setRotationSpeed('anim-cool-screw', 3.5 / speedFactor);
+
+        // B. 流体流量控制 【核心美化点：更细、更精致的线条】
+        // 原料流
+        setFlow('flow-feed', 4, 3); // 宽度4px
+        setFlow('flow-dry', 4, 3);
+
+        // 热解气流 (宽度 3px - 10px)
+        let gasWidth = 3 + results.gasRate * 7;
+        let gasSpeed = 3.5 - results.gasRate * 2.5;
+        setFlow('flow-raw-gas', gasWidth, gasSpeed);
+        setFlow('flow-clean-gas', gasWidth*0.8, gasSpeed);
+        let rotameterY = -20 + results.gasRate * 35;
+        document.getElementById('gas-rotameter').setAttribute('transform', `translate(0, ${rotameterY})`);
+
+        // 生物油流
+        let oilWaveHeight = 10 + results.oilRate * 12;
+        document.getElementById('oil-wave-anim').setAttribute('values', `${oilWaveHeight};${oilWaveHeight+2};${oilWaveHeight}`);
+        const oilDripAnim = document.getElementById('oil-drip-anim');
+        if(oilDripAnim) oilDripAnim.setAttribute('dur', `${1.8 - results.oilRate*1.2}s`);
+
+        // 生物炭流 (宽度 5px - 12px)
+        let charWidth = 5 + results.charRate * 7;
+        setFlow('flow-hot-char', charWidth, 3.5);
+        setFlow('flow-cooled-char', charWidth, 3.5);
+        
+        // 高温警报视觉
+        const hotCharFlow = document.getElementById('flow-hot-char');
+        const outTempVal = document.getElementById('out-temp-val');
+        if(results.outTemp > 100) {
+            hotCharFlow.style.stroke = 'var(--danger)';
+            // 切换滤镜以增强高温感 (可选)
+            outTempVal.style.color = 'var(--danger)';
+        } else if (results.outTemp > 60) {
+            hotCharFlow.style.stroke = 'var(--char-hot)';
+            outTempVal.style.color = 'var(--warning)';
+        } else {
+            hotCharFlow.style.stroke = '#666';
+            outTempVal.style.color = 'var(--success)';
+        }
+
+        // C. 反应炉内部状态
+        const kilnMat = document.getElementById('kiln-material');
+        if (params.temp > 600) {
+            kilnMat.children[2].setAttribute('fill', '#d32f2f');
+        } else {
+            kilnMat.children[2].setAttribute('fill', '#222');
+        }
+    }
+
+    // 辅助函数
+    function setRotationSpeed(id, dur) {
+        const el = document.getElementById(id);
+        if(el) el.style.animationDuration = dur + 's';
+    }
+    function setFlow(id, width, dur) {
+        const el = document.getElementById(id);
+        if(el) {
+            // V8修改：不再使用 scale，直接设置精确的像素宽度
+            el.style.strokeWidth = width + 'px'; 
+            el.style.animationDuration = dur + 's';
+            el.classList.add('flowing');
+        }
+    }
+    function resetFlows() {
+        document.querySelectorAll('.flow-stream').forEach(el => {
+            el.style.strokeWidth = 0;
+            el.classList.remove('flowing');
+        });
+        document.getElementById('gas-rotameter').setAttribute('transform', `translate(0, -20)`);
+    }
+    function updateTempPreview() {
+        let temp = params.temp - (params.cool * 3.5);
+        temp = Math.max(30, temp);
+        document.getElementById('out-temp-val').innerText = temp.toFixed(0) + '℃';
+    }
+
+    // ================== 循环累积动画 ==================
+    function simulationLoop() {
+        if(!isRunning) return;
+
+        // 1. 炭堆累积
+        let growth = results.charRate * 0.25; 
+        charPileLevel += growth;
+        if (charPileLevel > 140) charPileLevel = 140;
+        const pile = document.getElementById('char-pile-visual');
+        pile.setAttribute('y', 140 - charPileLevel);
+        pile.setAttribute('height', charPileLevel);
+
+        // 2. 油箱液位累积
+        if (oilTankLevel < 55) {
+            oilTankLevel += results.oilRate * 0.04;
+            const oilViz = document.getElementById('oil-level-visual');
+            const oilAnimY = document.getElementById('oil-wave-anim-y');
+            oilViz.setAttribute('height', oilTankLevel);
+            oilViz.setAttribute('y', 50 - oilTankLevel);
+            let baseY = 50 - oilTankLevel;
+            oilAnimY.setAttribute('values', `${baseY};${baseY-2};${baseY}`);
+        }
+
+        animFrameId = requestAnimationFrame(simulationLoop);
+    }
+
+    // 初始化
+    updateXRay(100);
+    updateTempPreview();
+
+</script>
+</body>
+</html>
